@@ -5,6 +5,7 @@
  */
 
 import type fs from 'node:fs';
+import path from 'node:path';
 
 import type {parseArguments} from './bin/chrome-devtools-mcp-cli-options.js';
 import type {Channel} from './browser.js';
@@ -25,6 +26,8 @@ import {
 import {ToolCategory} from './tools/categories.js';
 import type {DefinedPageTool, ToolDefinition} from './tools/ToolDefinition.js';
 import {pageIdSchema} from './tools/ToolDefinition.js';
+import type {ScreencastSegmentManager} from './tools/screencast-segments.js';
+import {TimelineLogger} from './tools/timeline-logger.js';
 import {createTools} from './tools/tools.js';
 import {VERSION} from './version.js';
 
@@ -115,6 +118,12 @@ export async function createMcpServer(
 
   const toolMutex = new Mutex();
 
+  // Timeline logger for human-mode screencast recordings.
+  // Activated when screencast_start is called in human mode,
+  // deactivated on screencast_stop.
+  let timelineLogger: TimelineLogger | null = null;
+  const humanMode = serverArgs.humanMode === true;
+
   function registerTool(tool: ToolDefinition | DefinedPageTool): void {
     if (
       tool.annotations.category === ToolCategory.EMULATION &&
@@ -177,7 +186,27 @@ export async function createMcpServer(
         const guard = await toolMutex.acquire();
         const startTime = Date.now();
         let success = false;
+        let timelineEntryId = 0;
         try {
+          // Timeline: log tool start if recording
+          if (timelineLogger) {
+            timelineEntryId = timelineLogger.logToolStart(
+              tool.name,
+              params as Record<string, unknown>,
+            );
+          }
+
+          // Segment manager: resume recording before action tools
+          if (humanMode) {
+            const recData = (await getContext().catch(() => null))
+              ?.getScreenRecorder?.() as any;
+            const segMgr: ScreencastSegmentManager | undefined =
+              recData?.segmentManager;
+            if (segMgr) {
+              await segMgr.beforeTool(tool.name);
+            }
+          }
+
           logger(`${tool.name} request: ${JSON.stringify(params, null, '  ')}`);
           const context = await getContext();
           logger(`${tool.name} context: resolved`);
@@ -244,10 +273,47 @@ export async function createMcpServer(
             isError: true,
           };
         } finally {
+          const durationMs = Date.now() - startTime;
+
+          // Timeline: log tool end
+          if (timelineLogger && timelineEntryId) {
+            timelineLogger.logToolEnd(timelineEntryId, durationMs);
+          }
+
+          // Segment manager: notify after tool
+          if (humanMode) {
+            const recData = (await getContext().catch(() => null))
+              ?.getScreenRecorder?.() as any;
+            const segMgr: ScreencastSegmentManager | undefined =
+              recData?.segmentManager;
+            if (segMgr) {
+              await segMgr.afterTool(tool.name);
+            }
+          }
+
+          // Timeline: activate on screencast_start, deactivate on screencast_stop
+          if (humanMode && tool.name === 'screencast_start' && success) {
+            const recorderData = (await getContext()).getScreenRecorder() as any;
+            if (recorderData?.filePath) {
+              const timelinePath = recorderData.filePath.replace(
+                /\.(mp4|webm)$/i,
+                '.jsonl',
+              );
+              timelineLogger = new TimelineLogger(timelinePath);
+              timelineLogger.start();
+              logger(`Timeline logger started: ${timelinePath}`);
+            }
+          }
+          if (tool.name === 'screencast_stop' && timelineLogger) {
+            timelineLogger.close();
+            logger('Timeline logger closed');
+            timelineLogger = null;
+          }
+
           void clearcutLogger?.logToolInvocation({
             toolName: tool.name,
             success,
-            latencyMs: bucketizeLatency(Date.now() - startTime),
+            latencyMs: bucketizeLatency(durationMs),
           });
           guard.dispose();
         }

@@ -42,45 +42,112 @@ function handleActionError(error: unknown, uid: string) {
   );
 }
 
-export const click = definePageTool({
-  name: 'click',
-  description: `Clicks on the provided element`,
-  annotations: {
-    category: ToolCategory.INPUT,
-    readOnlyHint: false,
-  },
-  schema: {
-    uid: zod
-      .string()
-      .describe(
-        'The uid of an element on the page from the page content snapshot',
-      ),
-    dblClick: dblClickSchema,
-    includeSnapshot: includeSnapshotSchema,
-  },
-  handler: async (request, response, context) => {
-    const uid = request.params.uid;
-    const handle = await request.page.getElementByUid(uid);
-    try {
-      await context.waitForEventsAfterAction(async () => {
-        await handle.asLocator().click({
-          count: request.params.dblClick ? 2 : 1,
+// SVG cursor injection script — adds a fake cursor to the page for recordings.
+// Exposes window.__mc(x,y) to move and window.__cp() to trigger click pulse.
+const CURSOR_INJECT_JS = `(() => {
+  if (document.getElementById('fake-cursor')) return;
+  var s = document.createElement('style');
+  s.textContent = '@keyframes click-ring { 0% { transform: translate(-50%,-50%) scale(0.3); opacity: 0.7; } 100% { transform: translate(-50%,-50%) scale(1.5); opacity: 0; } }';
+  document.head.appendChild(s);
+  const c = document.createElement('div');
+  c.id = 'fake-cursor';
+  c.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5.5 3.21V20.8c0 .45.54.67.85.35l4.86-4.86a.5.5 0 0 1 .35-.15h6.87c.45 0 .67-.54.35-.85L5.85 2.35a.5.5 0 0 0-.35.86z" fill="white" stroke="black" stroke-width="1.5"/></svg>';
+  c.style.cssText = 'position:fixed;top:-50px;left:-50px;z-index:999999;pointer-events:none;transition:all 0.25s cubic-bezier(0.25,0.1,0.25,1);filter:drop-shadow(1px 2px 2px rgba(0,0,0,0.4));';
+  document.body.appendChild(c);
+  window.__mc = (x, y) => { c.style.left = x + 'px'; c.style.top = y + 'px'; };
+  window.__cp = () => {
+    c.style.transform = 'scale(0.8)';
+    setTimeout(() => { c.style.transform = 'scale(1)'; }, 150);
+    var ring = document.createElement('div');
+    ring.style.cssText = 'position:fixed;left:' + c.style.left + ';top:' + c.style.top + ';width:40px;height:40px;border-radius:50%;border:2px solid rgba(59,130,246,0.7);pointer-events:none;z-index:999998;animation:click-ring 0.45s ease-out forwards;';
+    document.body.appendChild(ring);
+    setTimeout(() => ring.remove(), 500);
+  };
+})()`;
+
+/**
+ * In human mode, inject fake cursor, animate to element center, pulse, then click.
+ */
+async function animateCursorToElement(
+  page: ContextPage,
+  handle: ElementHandle,
+) {
+  // Ensure fake cursor is injected
+  await page.pptrPage.evaluate(CURSOR_INJECT_JS).catch(() => {});
+
+  // Get element bounding box
+  const box = await handle.boundingBox();
+  if (box) {
+    const cx = Math.round(box.x + box.width / 2);
+    const cy = Math.round(box.y + box.height / 2);
+    // Move cursor
+    await page.pptrPage.evaluate(
+      (x: number, y: number) => {
+        (window as any).__mc?.(x, y);
+      },
+      cx,
+      cy,
+    );
+    // Wait for CSS transition
+    await new Promise(resolve => setTimeout(resolve, 300));
+    // Click pulse
+    await page.pptrPage
+      .evaluate(() => {
+        (window as any).__cp?.();
+      })
+      .catch(() => {});
+    await new Promise(resolve => setTimeout(resolve, 120));
+  }
+}
+
+export const click = definePageTool(args => {
+  const humanMode = args?.humanMode === true;
+
+  return {
+    name: 'click',
+    description: `Clicks on the provided element`,
+    annotations: {
+      category: ToolCategory.INPUT,
+      readOnlyHint: false,
+    },
+    schema: {
+      uid: zod
+        .string()
+        .describe(
+          'The uid of an element on the page from the page content snapshot',
+        ),
+      dblClick: dblClickSchema,
+      includeSnapshot: includeSnapshotSchema,
+    },
+    handler: async (request, response, context) => {
+      const uid = request.params.uid;
+      const handle = await request.page.getElementByUid(uid);
+      try {
+        // In human mode, animate fake cursor to the element before clicking
+        if (humanMode) {
+          await animateCursorToElement(request.page, handle).catch(() => {});
+        }
+
+        await context.waitForEventsAfterAction(async () => {
+          await handle.asLocator().click({
+            count: request.params.dblClick ? 2 : 1,
+          });
         });
-      });
-      response.appendResponseLine(
-        request.params.dblClick
-          ? `Successfully double clicked on the element`
-          : `Successfully clicked on the element`,
-      );
-      if (request.params.includeSnapshot) {
-        response.includeSnapshot();
+        response.appendResponseLine(
+          request.params.dblClick
+            ? `Successfully double clicked on the element`
+            : `Successfully clicked on the element`,
+        );
+        if (request.params.includeSnapshot) {
+          response.includeSnapshot();
+        }
+      } catch (error) {
+        handleActionError(error, uid);
+      } finally {
+        void handle.dispose();
       }
-    } catch (error) {
-      handleActionError(error, uid);
-    } finally {
-      void handle.dispose();
-    }
-  },
+    },
+  };
 });
 
 export const clickAt = definePageTool({
@@ -217,37 +284,52 @@ async function fillFormElement(
   }
 }
 
-export const fill = definePageTool({
-  name: 'fill',
-  description: `Type text into a input, text area or select an option from a <select> element.`,
-  annotations: {
-    category: ToolCategory.INPUT,
-    readOnlyHint: false,
-  },
-  schema: {
-    uid: zod
-      .string()
-      .describe(
-        'The uid of an element on the page from the page content snapshot',
-      ),
-    value: zod.string().describe('The value to fill in'),
-    includeSnapshot: includeSnapshotSchema,
-  },
-  handler: async (request, response, context) => {
-    const page = request.page;
-    await context.waitForEventsAfterAction(async () => {
-      await fillFormElement(
-        request.params.uid,
-        request.params.value,
-        context as McpContext,
-        page,
-      );
-    });
-    response.appendResponseLine(`Successfully filled out the element`);
-    if (request.params.includeSnapshot) {
-      response.includeSnapshot();
-    }
-  },
+export const fill = definePageTool(args => {
+  const humanMode = args?.humanMode === true;
+
+  return {
+    name: 'fill',
+    description: `Type text into a input, text area or select an option from a <select> element.`,
+    annotations: {
+      category: ToolCategory.INPUT,
+      readOnlyHint: false,
+    },
+    schema: {
+      uid: zod
+        .string()
+        .describe(
+          'The uid of an element on the page from the page content snapshot',
+        ),
+      value: zod.string().describe('The value to fill in'),
+      includeSnapshot: includeSnapshotSchema,
+    },
+    handler: async (request, response, context) => {
+      const page = request.page;
+
+      // In human mode, animate cursor to the field before filling
+      if (humanMode) {
+        const handle = await page.getElementByUid(request.params.uid);
+        try {
+          await animateCursorToElement(page, handle).catch(() => {});
+        } finally {
+          void handle.dispose();
+        }
+      }
+
+      await context.waitForEventsAfterAction(async () => {
+        await fillFormElement(
+          request.params.uid,
+          request.params.value,
+          context as McpContext,
+          page,
+        );
+      });
+      response.appendResponseLine(`Successfully filled out the element`);
+      if (request.params.includeSnapshot) {
+        response.includeSnapshot();
+      }
+    },
+  };
 });
 
 export const typeText = definePageTool({

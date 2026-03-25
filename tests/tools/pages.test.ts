@@ -374,7 +374,7 @@ describe('pages', () => {
       assert.notStrictEqual(context.getSelectedMcpPage(), isolatedPage);
 
       // Navigate using page; should target the isolated page.
-      await navigatePage.handler(
+      await navigatePage().handler(
         {
           params: {
             url: 'data:text/html,<h1>Navigated</h1>',
@@ -517,7 +517,7 @@ describe('pages', () => {
   describe('navigate_page', () => {
     it('navigates to correct page', async () => {
       await withMcpContext(async (response, context) => {
-        await navigatePage.handler(
+        await navigatePage().handler(
           {
             params: {url: 'data:text/html,<div>Hello MCP</div>'},
             page: context.getSelectedMcpPage(),
@@ -546,7 +546,7 @@ describe('pages', () => {
         await page.pptrPage.close();
 
         try {
-          await navigatePage.handler(
+          await navigatePage().handler(
             {
               params: {url: 'data:text/html,<div>Hello MCP</div>'},
               page: context.getSelectedMcpPage(),
@@ -570,7 +570,7 @@ describe('pages', () => {
         const stub = sinon.stub(page, 'waitForNavigation').resolves(null);
 
         try {
-          await navigatePage.handler(
+          await navigatePage().handler(
             {
               params: {
                 url: 'about:blank',
@@ -596,7 +596,7 @@ describe('pages', () => {
       await withMcpContext(async (response, context) => {
         const page = context.getSelectedPptrPage();
         await page.goto('data:text/html,<div>Hello MCP</div>');
-        await navigatePage.handler(
+        await navigatePage().handler(
           {params: {type: 'back'}, page: context.getSelectedMcpPage()},
           response,
           context,
@@ -614,7 +614,7 @@ describe('pages', () => {
         const page = context.getSelectedPptrPage();
         await page.goto('data:text/html,<div>Hello MCP</div>');
         await page.goBack();
-        await navigatePage.handler(
+        await navigatePage().handler(
           {params: {type: 'forward'}, page: context.getSelectedMcpPage()},
           response,
           context,
@@ -631,7 +631,7 @@ describe('pages', () => {
       await withMcpContext(async (response, context) => {
         const page = context.getSelectedPptrPage();
         await page.goto('data:text/html,<div>Hello MCP</div>');
-        await navigatePage.handler(
+        await navigatePage().handler(
           {params: {type: 'reload'}, page: context.getSelectedMcpPage()},
           response,
           context,
@@ -657,7 +657,7 @@ describe('pages', () => {
           </script>`,
         );
 
-        await navigatePage.handler(
+        await navigatePage().handler(
           {params: {type: 'reload'}, page: context.getSelectedMcpPage()},
           response,
           context,
@@ -684,7 +684,7 @@ describe('pages', () => {
           </script>`,
         );
 
-        await navigatePage.handler(
+        await navigatePage().handler(
           {
             params: {
               type: 'reload',
@@ -708,7 +708,7 @@ describe('pages', () => {
 
     it('go forward with error', async () => {
       await withMcpContext(async (response, context) => {
-        await navigatePage.handler(
+        await navigatePage().handler(
           {params: {type: 'forward'}, page: context.getSelectedMcpPage()},
           response,
           context,
@@ -724,7 +724,7 @@ describe('pages', () => {
     });
     it('go back with error', async () => {
       await withMcpContext(async (response, context) => {
-        await navigatePage.handler(
+        await navigatePage().handler(
           {params: {type: 'back'}, page: context.getSelectedMcpPage()},
           response,
           context,
@@ -740,7 +740,7 @@ describe('pages', () => {
     });
     it('navigates to correct page with initScript', async () => {
       await withMcpContext(async (response, context) => {
-        await navigatePage.handler(
+        await navigatePage().handler(
           {
             params: {
               url: 'data:text/html,<div>Hello MCP</div>',

@@ -37,7 +37,7 @@ describe('input', () => {
           html`<button onclick="this.innerText = 'clicked';">test</button>`,
         );
         await context.createTextSnapshot(context.getSelectedMcpPage());
-        await click.handler(
+        await click().handler(
           {
             params: {
               uid: '1_1',
@@ -64,7 +64,7 @@ describe('input', () => {
           >`,
         );
         await context.createTextSnapshot(context.getSelectedMcpPage());
-        await click.handler(
+        await click().handler(
           {
             params: {
               uid: '1_1',
@@ -99,7 +99,7 @@ describe('input', () => {
         const page = context.getSelectedPptrPage();
         await page.goto(server.getRoute('/link'));
         await context.createTextSnapshot(context.getSelectedMcpPage());
-        const clickPromise = click.handler(
+        const clickPromise = click().handler(
           {
             params: {
               uid: '1_1',
@@ -142,7 +142,7 @@ describe('input', () => {
         const page = context.getSelectedPptrPage();
         await page.goto(server.getRoute('/unstable'));
         await context.createTextSnapshot(context.getSelectedMcpPage());
-        const handlerResolveTime = await click
+        const handlerResolveTime = await click()
           .handler(
             {
               params: {
@@ -170,7 +170,7 @@ describe('input', () => {
           html`<button onclick="this.innerText = 'clicked';">test</button>`,
         );
         await context.createTextSnapshot(context.getSelectedMcpPage());
-        await click.handler(
+        await click().handler(
           {
             params: {
               uid: '1_1',
@@ -195,7 +195,7 @@ describe('input', () => {
           html`<button onclick="this.innerText = 'clicked';">test</button>`,
         );
         await context.createTextSnapshot(context.getSelectedMcpPage());
-        await click.handler(
+        await click().handler(
           {
             params: {
               uid: '1_1',
@@ -312,7 +312,7 @@ describe('input', () => {
         const page = context.getSelectedPptrPage();
         await page.setContent(html`<input />`);
         await context.createTextSnapshot(context.getSelectedMcpPage());
-        await fill.handler(
+        await fill().handler(
           {
             params: {
               uid: '1_1',
@@ -342,7 +342,7 @@ describe('input', () => {
           >`,
         );
         await context.createTextSnapshot(context.getSelectedMcpPage());
-        await fill.handler(
+        await fill().handler(
           {
             params: {
               uid: '1_1',
@@ -370,7 +370,7 @@ describe('input', () => {
         const page = context.getSelectedPptrPage();
         await page.setContent(html`<textarea role="combobox"></textarea>`);
         await context.createTextSnapshot(context.getSelectedMcpPage());
-        await fill.handler(
+        await fill().handler(
           {
             params: {
               uid: '1_1',
@@ -400,7 +400,7 @@ describe('input', () => {
         await page.setContent(html`<textarea></textarea>`);
         await context.createTextSnapshot(context.getSelectedMcpPage());
         page.setDefaultTimeout(1000);
-        await fill.handler(
+        await fill().handler(
           {
             params: {
               uid: '1_1',
@@ -532,7 +532,7 @@ describe('input', () => {
 
         // Fill email
         const response1 = new McpResponse({} as ParsedArguments);
-        await fill.handler(
+        await fill().handler(
           {
             params: {
               uid: '1_1', // email input
@@ -550,7 +550,7 @@ describe('input', () => {
 
         // Fill password
         const response2 = new McpResponse({} as ParsedArguments);
-        await fill.handler(
+        await fill().handler(
           {
             params: {
               uid: '1_2', // password input

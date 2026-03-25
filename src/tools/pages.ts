@@ -129,153 +129,182 @@ export const newPage = defineTool({
   },
 });
 
-export const navigatePage = definePageTool({
-  name: 'navigate_page',
-  description: `Go to a URL, or back, forward, or reload. Use project URL if not specified otherwise.`,
-  annotations: {
-    category: ToolCategory.NAVIGATION,
-    readOnlyHint: false,
-  },
-  schema: {
-    type: zod
-      .enum(['url', 'back', 'forward', 'reload'])
-      .optional()
-      .describe(
-        'Navigate the page by URL, back or forward in history, or reload.',
-      ),
-    url: zod.string().optional().describe('Target URL (only type=url)'),
-    ignoreCache: zod
-      .boolean()
-      .optional()
-      .describe('Whether to ignore cache on reload.'),
-    handleBeforeUnload: zod
-      .enum(['accept', 'decline'])
-      .optional()
-      .describe(
-        'Whether to auto accept or beforeunload dialogs triggered by this navigation. Default is accept.',
-      ),
-    initScript: zod
-      .string()
-      .optional()
-      .describe(
-        'A JavaScript script to be executed on each new document before any other scripts for the next navigation.',
-      ),
-    ...timeoutSchema,
-  },
-  handler: async (request, response, context) => {
-    const page = request.page;
-    const options = {
-      timeout: request.params.timeout,
-    };
+// In human mode, also modify the evaluate_script tool description to discourage
+// using JS to navigate (window.location = ...) or manipulate DOM directly.
+// This is handled via the description change in navigatePage above — the key
+// behavioral change is blocking navigate_page(type=url).
 
-    if (!request.params.type && !request.params.url) {
-      throw new Error('Either URL or a type is required.');
-    }
+export const navigatePage = definePageTool(args => {
+  const humanMode = args?.humanMode === true;
 
-    if (!request.params.type) {
-      request.params.type = 'url';
-    }
+  return {
+    name: 'navigate_page',
+    description: humanMode
+      ? `Navigate back, forward, or reload the current page. ` +
+        `DO NOT use this to navigate by URL — instead, take a snapshot and click a link or button on the page like a real user would. ` +
+        `URL navigation is blocked in human mode. Use click() to navigate between pages.`
+      : `Go to a URL, or back, forward, or reload. Use project URL if not specified otherwise.`,
+    annotations: {
+      category: ToolCategory.NAVIGATION,
+      readOnlyHint: false,
+    },
+    schema: {
+      type: zod
+        .enum(['url', 'back', 'forward', 'reload'])
+        .optional()
+        .describe(
+          humanMode
+            ? 'Navigate back, forward, or reload. type=url is not allowed in human mode — use click instead.'
+            : 'Navigate the page by URL, back or forward in history, or reload.',
+        ),
+      url: zod.string().optional().describe('Target URL (only type=url)'),
+      ignoreCache: zod
+        .boolean()
+        .optional()
+        .describe('Whether to ignore cache on reload.'),
+      handleBeforeUnload: zod
+        .enum(['accept', 'decline'])
+        .optional()
+        .describe(
+          'Whether to auto accept or beforeunload dialogs triggered by this navigation. Default is accept.',
+        ),
+      initScript: zod
+        .string()
+        .optional()
+        .describe(
+          'A JavaScript script to be executed on each new document before any other scripts for the next navigation.',
+        ),
+      ...timeoutSchema,
+    },
+    handler: async (request, response, context) => {
+      const page = request.page;
+      const options = {
+        timeout: request.params.timeout,
+      };
 
-    const handleBeforeUnload = request.params.handleBeforeUnload ?? 'accept';
-    const dialogHandler = (dialog: Dialog) => {
-      if (dialog.type() === 'beforeunload') {
-        if (handleBeforeUnload === 'accept') {
-          response.appendResponseLine(`Accepted a beforeunload dialog.`);
-          void dialog.accept();
-        } else {
-          response.appendResponseLine(`Declined a beforeunload dialog.`);
-          void dialog.dismiss();
-        }
-        // We are not going to report the dialog like regular dialogs.
-        page.clearDialog();
+      if (!request.params.type && !request.params.url) {
+        throw new Error('Either URL or a type is required.');
       }
-    };
 
-    let initScriptId: string | undefined;
-    if (request.params.initScript) {
-      const {identifier} = await page.pptrPage.evaluateOnNewDocument(
-        request.params.initScript,
-      );
-      initScriptId = identifier;
-    }
+      if (!request.params.type) {
+        request.params.type = 'url';
+      }
 
-    page.pptrPage.on('dialog', dialogHandler);
+      // Human mode: block URL navigation, nudge toward click-based interaction
+      if (humanMode && request.params.type === 'url') {
+        response.appendResponseLine(
+          `HUMAN MODE: Direct URL navigation is disabled. ` +
+            `Navigate like a real user would — take a snapshot to see the page, ` +
+            `then use click() on a link, button, or navigation element to get where you need to go. ` +
+            `This produces more realistic interactions for recordings and catches UI bugs that URL navigation misses.`,
+        );
+        response.setIncludePages(true);
+        return;
+      }
 
-    try {
-      await context.waitForEventsAfterAction(
-        async () => {
-          switch (request.params.type) {
-            case 'url':
-              if (!request.params.url) {
-                throw new Error(
-                  'A URL is required for navigation of type=url.',
-                );
-              }
-              try {
-                await page.pptrPage.goto(request.params.url, options);
-                response.appendResponseLine(
-                  `Successfully navigated to ${request.params.url}.`,
-                );
-              } catch (error) {
-                response.appendResponseLine(
-                  `Unable to navigate in the  selected page: ${error.message}.`,
-                );
-              }
-              break;
-            case 'back':
-              try {
-                await page.pptrPage.goBack(options);
-                response.appendResponseLine(
-                  `Successfully navigated back to ${page.pptrPage.url()}.`,
-                );
-              } catch (error) {
-                response.appendResponseLine(
-                  `Unable to navigate back in the selected page: ${error.message}.`,
-                );
-              }
-              break;
-            case 'forward':
-              try {
-                await page.pptrPage.goForward(options);
-                response.appendResponseLine(
-                  `Successfully navigated forward to ${page.pptrPage.url()}.`,
-                );
-              } catch (error) {
-                response.appendResponseLine(
-                  `Unable to navigate forward in the selected page: ${error.message}.`,
-                );
-              }
-              break;
-            case 'reload':
-              try {
-                await page.pptrPage.reload({
-                  ...options,
-                  ignoreCache: request.params.ignoreCache,
-                });
-                response.appendResponseLine(`Successfully reloaded the page.`);
-              } catch (error) {
-                response.appendResponseLine(
-                  `Unable to reload the selected page: ${error.message}.`,
-                );
-              }
-              break;
+      const handleBeforeUnload =
+        request.params.handleBeforeUnload ?? 'accept';
+      const dialogHandler = (dialog: Dialog) => {
+        if (dialog.type() === 'beforeunload') {
+          if (handleBeforeUnload === 'accept') {
+            response.appendResponseLine(`Accepted a beforeunload dialog.`);
+            void dialog.accept();
+          } else {
+            response.appendResponseLine(`Declined a beforeunload dialog.`);
+            void dialog.dismiss();
           }
-        },
-        {timeout: request.params.timeout},
-      );
-    } finally {
-      page.pptrPage.off('dialog', dialogHandler);
-      if (initScriptId) {
-        await page.pptrPage
-          .removeScriptToEvaluateOnNewDocument(initScriptId)
-          .catch(error => {
-            logger(`Failed to remove init script`, error);
-          });
-      }
-    }
+          page.clearDialog();
+        }
+      };
 
-    response.setIncludePages(true);
-  },
+      let initScriptId: string | undefined;
+      if (request.params.initScript) {
+        const {identifier} = await page.pptrPage.evaluateOnNewDocument(
+          request.params.initScript,
+        );
+        initScriptId = identifier;
+      }
+
+      page.pptrPage.on('dialog', dialogHandler);
+
+      try {
+        await context.waitForEventsAfterAction(
+          async () => {
+            switch (request.params.type) {
+              case 'url':
+                if (!request.params.url) {
+                  throw new Error(
+                    'A URL is required for navigation of type=url.',
+                  );
+                }
+                try {
+                  await page.pptrPage.goto(request.params.url, options);
+                  response.appendResponseLine(
+                    `Successfully navigated to ${request.params.url}.`,
+                  );
+                } catch (error) {
+                  response.appendResponseLine(
+                    `Unable to navigate in the  selected page: ${error.message}.`,
+                  );
+                }
+                break;
+              case 'back':
+                try {
+                  await page.pptrPage.goBack(options);
+                  response.appendResponseLine(
+                    `Successfully navigated back to ${page.pptrPage.url()}.`,
+                  );
+                } catch (error) {
+                  response.appendResponseLine(
+                    `Unable to navigate back in the selected page: ${error.message}.`,
+                  );
+                }
+                break;
+              case 'forward':
+                try {
+                  await page.pptrPage.goForward(options);
+                  response.appendResponseLine(
+                    `Successfully navigated forward to ${page.pptrPage.url()}.`,
+                  );
+                } catch (error) {
+                  response.appendResponseLine(
+                    `Unable to navigate forward in the selected page: ${error.message}.`,
+                  );
+                }
+                break;
+              case 'reload':
+                try {
+                  await page.pptrPage.reload({
+                    ...options,
+                    ignoreCache: request.params.ignoreCache,
+                  });
+                  response.appendResponseLine(
+                    `Successfully reloaded the page.`,
+                  );
+                } catch (error) {
+                  response.appendResponseLine(
+                    `Unable to reload the selected page: ${error.message}.`,
+                  );
+                }
+                break;
+            }
+          },
+          {timeout: request.params.timeout},
+        );
+      } finally {
+        page.pptrPage.off('dialog', dialogHandler);
+        if (initScriptId) {
+          await page.pptrPage
+            .removeScriptToEvaluateOnNewDocument(initScriptId)
+            .catch(error => {
+              logger(`Failed to remove init script`, error);
+            });
+        }
+      }
+
+      response.setIncludePages(true);
+    },
+  };
 });
 
 export const resizePage = definePageTool({

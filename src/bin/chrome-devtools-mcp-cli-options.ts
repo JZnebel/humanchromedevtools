@@ -243,6 +243,14 @@ export const cliOptions = {
     hidden: true,
     describe: 'Include watchdog PID in Clearcut request headers (for testing).',
   },
+  humanMode: {
+    type: 'boolean',
+    default: false,
+    describe:
+      'Forces the AI to interact like a human — click links and buttons instead of navigating by URL. ' +
+      'navigate_page(type=url) returns an error nudging the AI to use click instead. ' +
+      'Useful for realistic demo recordings and thorough UI testing.',
+  },
   slim: {
     type: 'boolean',
     describe:
