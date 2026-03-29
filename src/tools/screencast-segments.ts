@@ -20,6 +20,7 @@
  *   screencast_stop → segment 002 ends, all finalized
  */
 
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import type {ScreenRecorder} from '../third_party/index.js';
 import {logger} from '../logger.js';
@@ -195,6 +196,8 @@ export class ScreencastSegmentManager {
     logger(`SegmentManager: resuming, segment ${this.segmentIndex} → ${segPath}`);
 
     try {
+      // Ensure parent directory exists
+      await fs.mkdir(path.dirname(segPath), {recursive: true});
       const recorder = await this.page.pptrPage.screencast({
         path: segPath as `${string}.webm`,
         format: 'webm' as const,

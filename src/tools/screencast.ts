@@ -13,6 +13,7 @@ import {promisify} from 'node:util';
 import {zod} from '../third_party/index.js';
 import type {ScreenRecorder} from '../third_party/index.js';
 
+import {logger} from '../logger.js';
 import {ToolCategory} from './categories.js';
 import {definePageTool} from './ToolDefinition.js';
 import {ScreencastSegmentManager} from './screencast-segments.js';
@@ -56,6 +57,10 @@ export const startScreencast = definePageTool({
     // Record as webm segments (stable with ffmpeg pipe)
     const basePath = resolvedPath.replace(/\.mp4$/i, '');
     const firstSegPath = `${basePath}-seg001.webm`;
+
+    // Ensure parent directory exists
+    const parentDir = path.dirname(firstSegPath);
+    await fs.mkdir(parentDir, {recursive: true});
 
     const page = request.page;
 
@@ -121,16 +126,49 @@ export const stopScreencast = definePageTool({
           return;
         }
 
-        if (segmentPaths.length === 1) {
+        // Verify segment files actually exist on disk
+        const existingSegments: string[] = [];
+        const missingSegments: string[] = [];
+        for (const seg of segmentPaths) {
+          try {
+            await fs.access(seg);
+            existingSegments.push(seg);
+          } catch {
+            missingSegments.push(seg);
+          }
+        }
+
+        if (existingSegments.length === 0) {
+          response.appendResponseLine(
+            `ERROR: Recording failed — none of the ${segmentPaths.length} segment files were written to disk. ` +
+            `Expected files like: ${segmentPaths[0]}. ` +
+            `Check that the output directory exists and is writable, and that ffmpeg is installed.`
+          );
+          return;
+        }
+
+        if (missingSegments.length > 0) {
+          response.appendResponseLine(
+            `Warning: ${missingSegments.length} of ${segmentPaths.length} segments missing from disk. Proceeding with ${existingSegments.length} segments.`
+          );
+        }
+
+        if (existingSegments.length === 1) {
           // Single segment — convert directly to mp4
-          outputPath = await convertToMp4(segmentPaths[0], mp4Path);
-          await fs.unlink(segmentPaths[0]).catch(() => {});
+          outputPath = await convertToMp4(existingSegments[0], mp4Path);
+          // Only delete source if conversion produced a different file
+          if (outputPath !== existingSegments[0]) {
+            await fs.unlink(existingSegments[0]).catch(() => {});
+          }
         } else {
           // Multiple segments — concat then convert
-          outputPath = await concatAndConvert(segmentPaths, mp4Path);
-          // Clean up segment files
-          for (const seg of segmentPaths) {
-            await fs.unlink(seg).catch(() => {});
+          outputPath = await concatAndConvert(existingSegments, mp4Path);
+          // Only clean up segments if output is a different file (concat succeeded)
+          const isSegment = existingSegments.includes(outputPath);
+          if (!isSegment) {
+            for (const seg of existingSegments) {
+              await fs.unlink(seg).catch(() => {});
+            }
           }
         }
       } else {
@@ -159,6 +197,15 @@ async function convertToMp4(
 ): Promise<string> {
   if (!mp4Path.endsWith('.mp4')) return webmPath;
 
+  // Verify source exists before attempting conversion
+  try {
+    await fs.access(webmPath);
+  } catch {
+    throw new Error(
+      `Cannot convert to mp4: source file does not exist at ${webmPath}`
+    );
+  }
+
   try {
     await execFileAsync('ffmpeg', [
       '-i',
@@ -178,7 +225,9 @@ async function convertToMp4(
       mp4Path,
     ]);
     return mp4Path;
-  } catch {
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger(`convertToMp4: ffmpeg failed (${message}), returning webm`);
     return webmPath;
   }
 }
@@ -220,8 +269,17 @@ async function concatAndConvert(
     await fs.unlink(concatWebm).catch(() => {});
 
     return result;
-  } catch {
-    // Fallback: return first segment
-    return segmentPaths[0];
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // Fallback: return first segment if it exists, otherwise throw
+    try {
+      await fs.access(segmentPaths[0]);
+      return segmentPaths[0];
+    } catch {
+      throw new Error(
+        `Screencast concat failed and no segment files exist on disk. ` +
+        `ffmpeg error: ${message}. Segments expected at: ${segmentPaths[0]}`
+      );
+    }
   }
 }

@@ -275,9 +275,42 @@ export async function createMcpServer(
         } finally {
           const durationMs = Date.now() - startTime;
 
-          // Timeline: log tool end
+          // Timeline: log tool end with element context for action tools
           if (timelineLogger && timelineEntryId) {
-            timelineLogger.logToolEnd(timelineEntryId, durationMs);
+            let elementContext: Record<string, unknown> | undefined;
+            if (success && ['click', 'fill', 'hover', 'drag'].includes(tool.name)) {
+              try {
+                const uid = (params as any)?.uid;
+                if (uid) {
+                  const ctx = await getContext().catch(() => null);
+                  const page = ctx?.getSelectedMcpPage?.();
+                  if (page) {
+                    // Use getElementByUid to resolve, then extract text via puppeteer
+                    const handle = await page.getElementByUid(uid).catch(() => null);
+                    if (handle) {
+                      const info = await handle.evaluate((el: Element) => {
+                        const text = el.textContent?.trim().substring(0, 100) || '';
+                        const tag = el.tagName.toLowerCase();
+                        const role = el.getAttribute('role') || '';
+                        const ariaLabel = el.getAttribute('aria-label') || '';
+                        return { text, tag, role, ariaLabel };
+                      }).catch(() => null);
+                      if (info) {
+                        elementContext = {
+                          elementText: info.text,
+                          elementTag: info.tag,
+                          elementRole: info.role || undefined,
+                          elementLabel: info.ariaLabel || undefined,
+                        };
+                      }
+                    }
+                  }
+                }
+              } catch {
+                // Non-critical — don't fail the tool call
+              }
+            }
+            timelineLogger.logToolEnd(timelineEntryId, durationMs, elementContext);
           }
 
           // Segment manager: notify after tool

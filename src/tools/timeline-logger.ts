@@ -15,6 +15,8 @@ const ALLOWED_PARAM_KEYS = new Set([
   'url',
   'key',
   'type',
+  'scrollY',
+  'function',
 ]);
 
 function classifyTool(toolName: string): ToolClassification {
@@ -83,14 +85,18 @@ export class TimelineLogger {
     return id;
   }
 
-  logToolEnd(id: number, durationMs: number): void {
+  logToolEnd(id: number, durationMs: number, context?: Record<string, unknown>): void {
     const offsetMs = Date.now() - this.recordingStartMs;
-    const entry = {
+    const entry: Record<string, unknown> = {
       id,
       offsetMs,
       durationMs,
       type: 'end' as const,
     };
+    // Merge optional context (element label, selector, result info)
+    if (context) {
+      Object.assign(entry, context);
+    }
     this.stream?.write(JSON.stringify(entry) + '\n');
   }
 
@@ -102,6 +108,23 @@ export class TimelineLogger {
       segmentIndex,
     };
     this.stream?.write(JSON.stringify(entry) + '\n');
+  }
+
+  logMarker(name: string, metadata?: Record<string, unknown>): void {
+    const offsetMs = Date.now() - this.recordingStartMs;
+    const entry: Record<string, unknown> = {
+      offsetMs,
+      type: 'marker' as const,
+      name,
+    };
+    if (metadata) {
+      Object.assign(entry, metadata);
+    }
+    this.stream?.write(JSON.stringify(entry) + '\n');
+  }
+
+  getElapsedMs(): number {
+    return Date.now() - this.recordingStartMs;
   }
 
   close(): void {
